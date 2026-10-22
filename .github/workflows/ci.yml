@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Ruff
+        run: ruff check .
+      - name: Pytest
+        run: pytest
+      - name: Smoke
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          cd "${work}"
+          issue-repro init
+          issue-repro pack
+          python - <<'PY'
+          import glob
+          import zipfile
+
+          archives = glob.glob("issue-repro-*.zip")
+          assert len(archives) == 1, archives
+          with zipfile.ZipFile(archives[0]) as zipped:
+              names = set(zipped.namelist())
+          required = {
+              "repro/README.md",
+              "repro/environment.md",
+              "repro/requirements.txt",
+              "repro/repro.py",
+              "repro/EXPECTED.txt",
+              "repro/ACTUAL.txt",
+          }
+          missing = required - names
+          assert not missing, missing
+          PY
+          set +e
+          python repro/repro.py
+          code=$?
+          set -e
+          test "${code}" -eq 1
